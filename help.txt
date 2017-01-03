@@ -1,0 +1,9 @@
+Usage: targetPicture [OPTION]... SOURCE TARGET
+Searches for a filter to transform the image SOURCE into TARGET
+
+  -b                       set the number of filters used to seed the next
+                           generation (default 16)
+  -f                       set the size of the filter (default 3)
+  -g                       set the number of generations (default 1000)
+  -h                       display this help and exit
+  -n                       set the number of filters (default 256)

@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <math.h>
 #include <random>
+#include <string.h>
+#include <fstream>
 
 using namespace std;
 
@@ -33,70 +35,179 @@ struct filter_header {
 
 // Scores the filter based on how accurately the filtered source matches the
 // target. A lower value is a better score (more similar).
-uint32_t scoreFilter(double filter[], unsigned char filterSize,
+uint32_t scoreFilter(double filter[], size_t filterSize,
                      pixel source[], pixel target[], int32_t imgSize);
 
 // Returns the pixel in the position (row, col) of the filtered image
-pixel filterPix(double filter[], unsigned char filterSize,
+pixel filterPix(double filter[], size_t filterSize,
                 int32_t row, int32_t col,
                 pixel source[], int32_t imgSize);
 
 // Prints a list of filter_t's
-void printFilters(filter_t filters[], unsigned char filterSize, size_t len);
+void printFilters(filter_t filters[], size_t filterSize, size_t len);
 
 // Mutates best filters to make new list of filters
 void mutate(filter_t best[], size_t numBest,
             filter_t newFilters[], size_t numFilters,
-            unsigned char filterSize);
+            size_t filterSize);
 
-int main(){
-  // Random setup
+void drawImg(pixel* img, size_t imgSize);
+
+int main(int argc, char *argv[]){
+  // Default values
+  size_t numGenerations = 1000;
+  size_t filterSize = 3; // length of one side of the filter
+  size_t numBest = 16;
+  size_t numFilters = 256;
+
+  int argi = 1;
+  while(argi < argc){
+    if(strcmp(argv[argi], "-h") == 0){
+      // Print contents of help.txt and exit
+      string line;
+      ifstream helpFile("help.txt");
+      if (!helpFile.is_open()){
+        cout << "Error: couldn't find help\n";
+        return 1;
+      }
+      while(getline(helpFile, line)){
+        cout << line << "\n";
+      }
+      helpFile.close();
+      return 1;
+    } else if(strcmp(argv[argi], "-g") == 0){
+      numGenerations = (size_t) stoi(argv[argi + 1]);
+      argi += 2;
+    } else if(strcmp(argv[argi], "-f") == 0){
+      filterSize = (size_t) stoi(argv[argi + 1]);
+      argi += 2;
+    } else if(strcmp(argv[argi], "-b") == 0){
+      numBest = (size_t) stoi(argv[argi + 1]);
+      argi += 2;
+    } else if(strcmp(argv[argi], "-n") == 0){
+      numFilters = (size_t) stoi(argv[argi + 1]);
+      argi += 2;
+    } else if(argv[argi][0] == '-'){
+      cout << "Invalid option " << argv[argi];
+      cout << ". Try -h for more information.\n";
+      return 1;
+    } else {
+      break;
+    }
+  }
+
+  pixel *source;
+  pixel *target;
+  size_t imgSize;
+  if(argi < argc){
+    // Print contents of help.txt and exit
+    string word;
+    ifstream inFile(argv[argi]);
+    if (!inFile.is_open()){
+      cout << "Error: couldn't open " << argv[argi] << "\n";
+      return 1;
+    }
+    inFile >> word; // Get special number to make sure file is of correct type
+    if(word.compare("646B") != 0){
+      cout << "Error: invalid format: " << argv[argi] << "\n";
+      return 1;
+    }
+    inFile >> word; // Get image size
+    imgSize = (size_t) stoi(word);
+    source = new pixel[imgSize * imgSize];
+    for(size_t i = 0; i < imgSize * imgSize; i++){
+      inFile >> word;
+      source[i] = (unsigned char) (unsigned int) stoi(word);
+    }
+    inFile.close();
+
+    if(argc - argi == 1){
+      cout << "No target image specified. Using source as target.\n";
+      target = source;
+    } else {
+      inFile.open(argv[argi+1]);
+      if (!inFile.is_open()){
+        cout << "Error: couldn't open " << argv[argi] << "\n";
+        return 1;
+      }
+      inFile >> word; // Get special number to make sure file is of correct type
+      if(word.compare("646B") != 0){
+        cout << "Error: invalid format: " << argv[argi] << "\n";
+        return 1;
+      }
+      inFile >> word; // Get image size
+      if((size_t) stoi(word) != imgSize){
+        cout << "Error: Source and target are not the same size\n";
+        return 1;
+      }
+      target = new pixel[imgSize * imgSize];
+      for(size_t i = 0; i < imgSize * imgSize; i++){
+        inFile >> word;
+        target[i] = (unsigned char) (unsigned int) stoi(word);
+      }
+      inFile.close();
+    }
+
+  } else { // Use a default source and target
+    imgSize = 3;
+    source = new pixel[9];
+    source[0] = 50;
+    source[1] = 60;
+    source[2] = 80;
+    source[3] = 60;
+    source[4] = 100;
+    source[5] = 90;
+    source[6] = 80;
+    source[7] = 90;
+    source[8] = 75;
+    target = source;
+  }
+
+  // Set up random
   srand(time(NULL));
 
-  filter_t *filters = new filter_t[64]; // filters is an array of 64 filter_t's
-  for(int i = 0; i < 64; i++){
+  filter_t *filters = new filter_t[numFilters];
+  for(size_t i = 0; i < numFilters; i++){
     filters[i] = new struct filter_header;
-    filters[i]->filter = new double[9]; // a filter is an array of 9 doubles
+    // A filter is an array of doubles
+    filters[i]->filter = new double[filterSize * filterSize];
     // Randomly populate each filter
-    for(int j = 0; j < 9; j++){
+    for(size_t j = 0; j < filterSize * filterSize; j++){
       // Favors positive numbers and low numbers
       filters[i]->filter[j] =
         log((double)rand()/RAND_MAX) * (rand() % 3 == 0 ? 1 : -1);
     }
   }
-  pixel source[] = {87,  107, 117, 129, 130,
-                    74,  111, 135, 149, 187,
-                    89,  127, 200, 195, 182,
-                    111, 154, 195, 176, 170,
-                    130, 190, 187, 172, 160};
-  // Ordered list of best (lowest) 16 filters
-  filter_t *best = new filter_t[16];
-  size_t numFilled = 0;
-  for(int runs = 0; runs < 1000; runs++){
-    for(int i = 0; i < 64; i++){
-      filters[i]->score = scoreFilter(filters[i]->filter, 3, source, source, 5);
 
-      if(numFilled < 16 || filters[i]->score < best[15]->score) {
-        // Insertion sort filters to only ever keep top 16
+  // Ordered list of best (lowest) 16 filters
+  filter_t *best = new filter_t[numBest];
+  size_t numFilled = 0;
+  for(size_t gen = 0; gen < numGenerations; gen++){
+    for(size_t i = 0; i < numFilters; i++){
+      filters[i]->score = scoreFilter(filters[i]->filter, filterSize,
+                                      source, target, imgSize);
+
+      if(numFilled < numBest || filters[i]->score < best[numBest - 1]->score) {
+        // Insertion sort filters to only ever keep top numBest
         filter_t temp;
         int insertIndex;
 
-        if(numFilled < 16){
+        if(numFilled < numBest){
           best[numFilled] = filters[i];
           insertIndex = numFilled;
           numFilled++;
         } else {
-          delete[] best[15]->filter;
-          delete best[15];
-          best[15] = filters[i];
-          insertIndex = 15;
+          delete[] best[numBest - 1]->filter;
+          delete best[numBest - 1];
+          best[numBest - 1] = filters[i];
+          insertIndex = numBest - 1;
         }
 
         while(insertIndex > 0 &&
               best[insertIndex]->score < best[insertIndex - 1]->score){
           // LOOP INVARIANTS
-          // best[0, insertIndex) < best(insertIndex, 15]
-          // best is sorted on [0, insertIndex) and on [insertIndex, 15]
+          // best[0, insertIndex) < best(insertIndex, numBest - 1]
+          // best is sorted on [0, insertIndex) and [insertIndex, numBest - 1]
           // insertIndex >= 0
 
           // Swap best[insertIndex] and best[insertIndex - 1]
@@ -104,37 +215,44 @@ int main(){
           best[insertIndex - 1] = best[insertIndex];
           best[insertIndex] = temp;
           insertIndex--;
-
         }
-      } else { // Score is not in best 16
+
+      } else { // Score is not one of the best
         delete[] filters[i]->filter;
         delete filters[i];
       }
     }
-    printFilters(best, 3, 3); // Print top 3
-    cout << "\n";
-    //    printFilters(filters, 3, 5);
-    mutate(best, 16, filters, 64, 3);
-    //    printFilters(filters, 3, 5);
-
+    mutate(best, numBest, filters, numFilters, filterSize);
   }
+  cout << "\nSource:\n";
+  drawImg(source, imgSize);
+  cout << "\nTarget:\n";
+  drawImg(target, imgSize);
+  cout << "\nTop 3:\n";
+  printFilters(best, filterSize, 3); // Print top 3 filters and scores
 
   // Free everything
-  for(int i = 0; i < 16; i++){
+  for(size_t i = 0; i < numBest; i++){
     delete[] best[i]->filter;
     delete best[i];
   }
-  for(int i = 0; i < 64; i++){
+  for(size_t i = 0; i < numFilters; i++){
     delete[] filters[i]->filter;
     delete filters[i];
   }
   delete[] best;
   delete[] filters;
+  if(target == source){ // If both point to the same thing...
+    delete[] source; // ... only delete one
+  } else {
+    delete[] source;
+    delete[] target;
+  }
 }
 
 // Scores the filter based on how accurately the filtered source matches the
 // target. A lower value is a better score (more similar).
-uint32_t scoreFilter(double filter[], unsigned char filterSize,
+uint32_t scoreFilter(double filter[], size_t filterSize,
                      pixel source[], pixel target[], int32_t imgSize){
   assert(filterSize % 2 == 1);
   uint32_t score = 0;
@@ -155,7 +273,7 @@ uint32_t scoreFilter(double filter[], unsigned char filterSize,
 }
 
 // Returns the pixel in the position (row, col) of the filtered image
-pixel filterPix(double filter[], unsigned char filterSize,
+pixel filterPix(double filter[], size_t filterSize,
                 int32_t row, int32_t col,
                 pixel source[], int32_t imgSize){
   unsigned int pixelVal;
@@ -179,13 +297,13 @@ pixel filterPix(double filter[], unsigned char filterSize,
 }
 
 // Prints a list of filter_t's
-void printFilters(filter_t filters[], unsigned char filterSize, size_t len){
+void printFilters(filter_t filters[], size_t filterSize, size_t len){
   for(size_t i = 0; i < len; i++){
     cout << i << ":\n  Score: " << filters[i]->score << "\n";
     cout << "  Filter:\n";
-    for(unsigned char r = 0; r < filterSize; r++){
+    for(size_t r = 0; r < filterSize; r++){
       cout << "    ";
-      for(unsigned char c = 0; c < filterSize; c++){
+      for(size_t c = 0; c < filterSize; c++){
         cout << filters[i]->filter[r * filterSize + c] << "\t";
       }
       cout << "\n";
@@ -197,7 +315,7 @@ void printFilters(filter_t filters[], unsigned char filterSize, size_t len){
 // Mutates best filters to make new list of filters
 void mutate(filter_t best[], size_t numBest,
             filter_t newFilters[], size_t numFilters,
-            unsigned char filterSize){
+            size_t filterSize){
   default_random_engine generator;
   normal_distribution<double> normal(0.0, 0.05);
   assert(numBest <= numFilters);
@@ -210,5 +328,14 @@ void mutate(filter_t best[], size_t numBest,
       newFilters[i]->filter[j] = best[i % numBest]->filter[j] +
         normal(generator);
     }
+  }
+}
+
+void drawImg(pixel* img, size_t imgSize){
+  for(size_t r = 0; r < imgSize; r++){
+    for(size_t c = 0; c < imgSize; c++){
+      cout << (unsigned int) img[r * imgSize + c] << " ";
+    }
+    cout << "\n";
   }
 }
